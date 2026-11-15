@@ -13,6 +13,8 @@ env:
   JUCE_TAG: "8.0.10"
   ORT_VERSION: "1.20.1"
   VOICE_PACKAGE_URL: ${{ secrets.VOICE_PACKAGE_URL }}
+  PYTHONUTF8: "1"        # torch's exporter prints emoji; the default Windows console code page can't
+  PYTHONIOENCODING: utf-8
 
 jobs:
   windows:
