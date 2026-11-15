@@ -133,7 +133,26 @@ juce::AudioProcessorEditor* VocalBuilderProcessor::createEditor() { return new V
 // ------------------------------------------------------------------------------- engine
 juce::StringArray VocalBuilderProcessor::baseArgs (const juce::String& cmd) const
 {
-    return { cmd, "--models", EngineJob::findModelsDir().getFullPathName() };
+    return { cmd, "--models", EngineJob::findModelsDir().getFullPathName(), "--user-voices", userVoicesDir().getFullPathName() };
+}
+
+juce::File VocalBuilderProcessor::userVoicesDir() { return Session::rootDir().getChildFile ("voices"); }
+
+juce::String VocalBuilderProcessor::addVoiceFromFolder (const juce::File& voiceJson)
+{
+    auto j = juce::JSON::parse (voiceJson.loadFileAsString());
+    const auto dir = voiceJson.getParentDirectory();
+    const auto id = j["id"].toString().retainCharacters ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_");
+    if (! j.isObject() || id.isEmpty() || ! dir.getChildFile ("synth.onnx").existsAsFile())
+        return "This is not a Vocal Builder voice (voice.json + synth.onnx expected).";
+    auto dest = userVoicesDir().getChildFile (id);
+    if (dest == dir)
+        return {};
+    dest.deleteRecursively();
+    if (! dest.createDirectory() || ! dir.copyDirectoryTo (dest))
+        return "The voice could not be copied.";
+    refreshVoicesAsync();
+    return {};
 }
 
 void VocalBuilderProcessor::refreshVoicesAsync()

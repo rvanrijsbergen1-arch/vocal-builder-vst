@@ -58,6 +58,8 @@ public:
                       std::function<void (juce::File, juce::String)> done);
     void cancelJob();
     void refreshVoicesAsync();
+    juce::String addVoiceFromFolder (const juce::File& voiceJson); // copies a voice package into the user's voices folder
+    static juce::File userVoicesDir();
     bool voicesLoading = false;
 
     // --- preview (message thread controls, audio thread renders) --------------------------

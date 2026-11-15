@@ -17,7 +17,10 @@ struct VoiceInfo
     std::filesystem::path dir;
 };
 
-std::vector<VoiceInfo> listVoices (const std::filesystem::path& modelsDir, bool includeTestOnly);
+// Voices are read from <models>/voices (installed with the product) and, if given, from a
+// per-user folder (voices the user added themselves, e.g. trained from their own vocals).
+std::vector<VoiceInfo> listVoices (const std::filesystem::path& modelsDir, bool includeTestOnly,
+                                   const std::filesystem::path& userVoicesDir = {});
 
 struct ConversionSettings
 {

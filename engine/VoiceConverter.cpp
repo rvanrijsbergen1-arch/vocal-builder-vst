@@ -17,14 +17,21 @@ static juce::var readJson (const fs::path& p)
     return juce::JSON::parse (f.loadFileAsString());
 }
 
-std::vector<VoiceInfo> listVoices (const fs::path& modelsDir, bool includeTestOnly)
+std::vector<VoiceInfo> listVoices (const fs::path& modelsDir, bool includeTestOnly, const fs::path& userVoicesDir)
 {
     std::vector<VoiceInfo> out;
-    const auto root = modelsDir / "voices";
-    if (! fs::exists (root))
-        return out;
-    for (auto& d : fs::directory_iterator (root))
+    std::vector<fs::path> dirs;
+    for (const auto& root : { modelsDir / "voices", userVoicesDir })
     {
+        std::error_code ec;
+        if (root.empty() || ! fs::is_directory (root, ec))
+            continue;
+        for (auto& d : fs::directory_iterator (root, ec))
+            dirs.push_back (d.path());
+    }
+    for (auto& path : dirs)
+    {
+        const fs::directory_entry d (path);
         if (! d.is_directory() || ! fs::exists (d.path() / "voice.json"))
             continue;
         auto j = readJson (d.path() / "voice.json");

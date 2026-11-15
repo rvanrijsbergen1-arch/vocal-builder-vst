@@ -9,7 +9,7 @@ const char* open = "Loads a WAV or MP3. Your original file is only read, never c
 const char* isolated = "Tick this if the file is already just a vocal (an acapella or a vocal bounce). Extraction is skipped, which avoids extra artifacts.";
 const char* section = "Drag across the waveform to choose a section, for example a chorus. Test a short section first, then run the full song with the same settings.";
 const char* extract = "Splits the mix into a vocal and an instrumental on this computer (Spleeter 2-stem model, no internet). Lead and backing vocals stay together. Dense mixes with loud kicks, screeches or heavy reverb can leave audible artifacts.";
-const char* voice = "The singing voice the vocal is converted into. Voices are installed with Vocal Builder; their licence is shown below the list.";
+const char* voice = "The singing voice the vocal is converted into. Voices come with Vocal Builder, or add your own trained voice with Add voice (pick its voice.json).";
 const char* pitch = "Moves the melody up or down in semitones before conversion, so it fits the voice's range. Example: +12 for a male vocal into a higher voice. The exported vocal is then in the new key.";
 const char* character = "How much of the voice's own recorded sound replaces the source's timbre. Higher sounds more like the voice but can blur words; try 40-60%.";
 const char* protect = "Keeps breaths and consonants like s, t and k closer to the original, which helps pronunciation. Lower values protect more; 33% is a good start.";
@@ -34,7 +34,7 @@ public:
     {
         for (auto* c : std::initializer_list<juce::Component*> {
                  &h1, &h2, &h3, &h4, &h5, &h6, &openButton, &isolated, &fileInfo, &wave, &startLabel, &endLabel, &startEdit,
-                 &endEdit, &fullSelect, &processSection, &processFull, &extractNote, &voiceBox, &voiceInfo, &pitch, &character,
+                 &endEdit, &fullSelect, &processSection, &processFull, &extractNote, &voiceBox, &addVoice, &voiceInfo, &pitch, &character,
                  &protect, &dynamics, &pitchL, &characterL, &protectL, &dynamicsL, &convertButton, &convertNote, &takeBox,
                  &previewView, &play, &stop, &aButton, &bButton, &loop, &match, &withInst, &muteInput, &volume, &volumeL,
                  &timeLabel, &exportSource, &exportRate, &exportBits, &exportTimeline, &exportButton, &dragButton,
@@ -68,6 +68,16 @@ public:
         processFull.onClick = [this] { proc.processSection (true); };
 
         voiceBox.onChange = [this] { refresh(); };
+        addVoice.onClick = [this] {
+            chooser = std::make_unique<juce::FileChooser> ("Choose the voice.json of a voice package", juce::File(), "voice.json");
+            chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc) {
+                if (! fc.getResult().existsAsFile())
+                    return;
+                auto err = proc.addVoiceFromFolder (fc.getResult());
+                if (err.isNotEmpty())
+                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Can't add voice", err);
+            });
+        };
         auto setupSlider = [] (juce::Slider& s, double lo, double hi, double step, double def, const juce::String& suffix) {
             s.setSliderStyle (juce::Slider::LinearHorizontal);
             s.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 22);
@@ -327,6 +337,7 @@ public:
         h3.setBounds (row (28));
         l = row();
         withInfo (l, voiceBox, 320, iVoice);
+        addVoice.setBounds (l.removeFromLeft (130));
         voiceInfo.setBounds (row (66));
         r.removeFromTop (8);
 
@@ -406,7 +417,7 @@ private:
     VocalBuilderProcessor& proc;
     SectionHeader h1 { 1, "Drop Track" }, h2 { 2, "Extract Vocal" }, h3 { 3, "Choose Voice" }, h4 { 4, "Convert" }, h5 { 5, "Preview" }, h6 { 6, "Export WAV" };
     juce::TextButton openButton { "Open Audio File..." }, fullSelect { "Select full song" }, processSection, processFull,
-        convertButton { "Convert" }, play { "Play" }, stop { "Stop" }, aButton { "A  Original vocal" }, bButton { "B  Converted" },
+        convertButton { "Convert" }, addVoice { "Add voice..." }, play { "Play" }, stop { "Stop" }, aButton { "A  Original vocal" }, bButton { "B  Converted" },
         exportButton { "Export WAV..." };
     juce::ToggleButton isolated { "This file is an isolated vocal (skip extraction)" }, loop { "Loop section" }, match { "Match loudness" },
         withInst { "Play with instrumental" }, muteInput { "Mute track input" };

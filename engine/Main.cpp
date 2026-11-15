@@ -125,7 +125,7 @@ int run (const std::string& cmd, const std::map<std::string, std::string>& a)
     {
         const auto models = pathArg (need (a, "models"));
         std::string voices = "[";
-        for (auto& v : listVoices (models, a.count ("include-test-voices") > 0))
+        for (auto& v : listVoices (models, a.count ("include-test-voices") > 0, a.count ("user-voices") ? pathArg (a.at ("user-voices")) : fs::path()))
         {
             if (voices.size() > 1)
                 voices += ",";
@@ -187,7 +187,7 @@ int run (const std::string& cmd, const std::map<std::string, std::string>& a)
     {
         const auto models = pathArg (need (a, "models"));
         const auto id = need (a, "voice");
-        const auto voices = listVoices (models, a.count ("include-test-voices") > 0);
+        const auto voices = listVoices (models, a.count ("include-test-voices") > 0, a.count ("user-voices") ? pathArg (a.at ("user-voices")) : fs::path());
         auto it = std::find_if (voices.begin(), voices.end(), [&] (auto& v) { return v.id == id; });
         if (it == voices.end())
             throw EngineError { "VOICE_MISSING", "The selected voice is not installed." };
