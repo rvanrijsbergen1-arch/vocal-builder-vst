@@ -1,4 +1,4 @@
-# Status — version 0.1.0 (15 November 2026)
+# Status — version 0.1.0 (15 November 2026, updated 15:30)
 
 ## What exists
 | Item | State |
@@ -6,8 +6,8 @@
 | Source code (plugin, engine, licensing, model tools, installer script, CI) | Written |
 | Real AI processing | **Separation: real** (Spleeter, verified). **Conversion: the full pipeline is real, but there is no trained voice yet** (see blockers) |
 | Compiled **Linux** VST3 | Built and passes pluginval at strictness 10, with GUI under a virtual display |
-| Compiled **Windows** VST3 | **Not built yet.** The reproducible CI workflow is ready, but it needs a GitHub repository to run in |
-| Windows installer | Inno Setup script ready; **not built yet** (built by the same CI job) |
+| Compiled **Windows** VST3 | **Built** by GitHub Actions (windows-2022); passes pluginval strictness 10 on Windows |
+| Windows installer | **Built**: `VocalBuilder-0.1.0-win64-setup.exe` (CI artifact). Not yet installed on a real PC by me |
 | Tested in FL Studio | **Not yet verified** |
 
 ## Implemented and tested (Linux x64, in this build environment)
@@ -27,22 +27,27 @@
   cross-tested (15/15). Full activation flow exercised. Engine refuses to process without activation.
 - Unicode file paths (é, ü, en dash).
 
-## Implemented, awaiting a build or verification
-- Windows x64 build of the VST3 + engine, pluginval on Windows, the licensed end-to-end test on
-  Windows, and the installer. All are in `.github/workflows/build-windows.yml` and need a GitHub repo.
+## Verified on Windows (GitHub Actions, windows-2022, CPU)
+- VST3 + engine compile with MSVC; pluginval strictness 10 (incl. editor tests): pass.
+- Real separation, the conversion pipeline (untrained test voice), preview, exports, cancel,
+  corrupt-model error and teardown during processing: the full PluginWorkflowTest passes (0 failures).
+- ContentVec-768 encoder exported to ONNX on the runner (matches PyTorch within 3e-4) and shipped.
+- Installer compiled with Inno Setup.
+
+## Implemented, awaiting verification
 - Loading and scanning in FL Studio, preview on an FL mixer insert, drag-and-drop from the plugin
   into the playlist.
 - Installation on a clean Windows PC and processing with the network disabled.
 - Help popovers on touch screens (they use clicks, never hover; not tried on a touch device).
 
 ## Blockers
-1. **No trained, licensed singing voice exists yet.** None of the pretrained voices or base models
+1. **No trained voice exists yet.** Personal-use build: the voice will be trained from the owner's own
+   dry vocals on his NVIDIA RTX PC (Applio / RVC v2, ContentVec, 40k or 48k), then converted with
+   `tools/models/export_rvc_voice.py` and added in the plugin with "Add voice...". Original note: None of the pretrained voices or base models
    checked can be redistributed commercially (see LICENCE_INVENTORY.md). Next step: recordings per
    RECORDING_BRIEF.md plus a signed singer agreement, then GPU training per training/VOICE_TRAINING.md.
    Until then the plugin says "No voice installed" and the Convert button stays disabled.
-2. **Windows binaries need a build machine.** This environment is Linux. Next step: a private
-   GitHub repository, so the included CI workflow can build and test on Windows (GitHub-hosted
-   runners; within the free monthly minutes for a small project).
+2. ~~Windows binaries~~ solved: built by CI in the private repo rvanrijsbergen1-arch/vocal-builder-vst.
 
 ## Measured performance (Linux, 2-core Intel Xeon 2.1 GHz VM, CPU only)
 | Task | Audio | Time | Peak memory |
