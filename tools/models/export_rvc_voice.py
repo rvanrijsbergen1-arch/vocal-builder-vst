@@ -170,6 +170,10 @@ def main():
     if a.index:
         import faiss
         ix = faiss.read_index(a.index)
+        try:
+            ix.make_direct_map()  # IVF indexes (RVC/Applio default) need this before reconstruct
+        except Exception:
+            pass
         f = ix.reconstruct_n(0, ix.ntotal).astype(np.float32)
     elif a.features:
         f = np.load(a.features).astype(np.float32)
