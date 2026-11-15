@@ -1,0 +1,142 @@
+# Builds the Windows x64 VST3, the VocalEngine helper, the local model assets and the installer.
+# Runs on GitHub-hosted Windows runners (no paid services). Artifacts appear on the run page.
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  JUCE_TAG: "8.0.10"
+  ORT_VERSION: "1.20.1"
+  VOICE_PACKAGE_URL: ${{ secrets.VOICE_PACKAGE_URL }}
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to release with the development licence key
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          if (Select-String -Path common/PublicKey.h -Pattern "kIsDevelopmentKey = true") {
+            Write-Error "common/PublicKey.h still contains the development key. Run tools/licence_admin.py init and paste your own public key."
+            exit 1
+          }
+
+      - name: Fetch JUCE and ONNX Runtime
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch $env:JUCE_TAG https://github.com/juce-framework/JUCE.git external/JUCE
+          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v$env:ORT_VERSION/onnxruntime-win-x64-$env:ORT_VERSION.zip" -OutFile ort.zip
+          Expand-Archive ort.zip -DestinationPath external
+          Rename-Item "external/onnxruntime-win-x64-$env:ORT_VERSION" onnxruntime
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build plugin, engine and tests
+        run: cmake --build build --config Release --parallel --target VocalBuilder_VST3 VocalEngine vb_licence_tests PluginWorkflowTest
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build local model assets (Spleeter separation, FCPE pitch)
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install tensorflow-cpu onnx onnxruntime onnxscript torchfcpe==0.0.4 soundfile scipy cryptography
+          Invoke-WebRequest https://github.com/deezer/spleeter/releases/download/v1.4.0/2stems.tar.gz -OutFile 2stems.tar.gz
+          New-Item -ItemType Directory -Force spleeter2, dist/models/separation, dist/models/pitch, dist/models/encoders, dist/models/voices | Out-Null
+          tar -xzf 2stems.tar.gz -C spleeter2
+          python tools/models/convert_spleeter.py spleeter2 dist/models/separation/spleeter_2stems.onnx
+          python tools/models/export_fcpe.py dist/models/pitch/fcpe.onnx
+          Remove-Item dist/models/pitch/*.npy
+
+      - name: Add licensed voice package (if provided)
+        # VOICE_PACKAGE_URL (repository secret): private download URL of a zip with
+        # encoders/<encoder>.onnx + voices/<id>/... produced by the training kit. Without it the
+        # installer ships without a voice and the plugin clearly reports that no voice is installed.
+        if: env.VOICE_PACKAGE_URL != ''
+        shell: pwsh
+        run: |
+          Invoke-WebRequest $env:VOICE_PACKAGE_URL -OutFile voice.zip
+          Expand-Archive voice.zip -DestinationPath dist/models -Force
+
+      - name: Stage files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/app, dist/vst3, dist/licences | Out-Null
+          Copy-Item build/VocalEngine_artefacts/Release/VocalEngine.exe dist/app/
+          Copy-Item external/onnxruntime/lib/onnxruntime.dll dist/app/
+          Copy-Item -Recurse "build/VocalBuilder_artefacts/Release/VST3/Vocal Builder.vst3" dist/vst3/
+          Copy-Item docs/THIRD_PARTY_NOTICES.md, docs/LICENCE_INVENTORY.md dist/licences/
+          Copy-Item external/onnxruntime/LICENSE dist/licences/onnxruntime-LICENSE.txt
+          Copy-Item third_party/monocypher/LICENCE.md dist/licences/monocypher-LICENCE.md
+          Copy-Item external/JUCE/LICENSE.md dist/licences/JUCE-LICENSE.md
+          Invoke-WebRequest https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile dist/vc_redist.x64.exe
+
+      - name: Licence crypto tests
+        shell: pwsh
+        run: |
+          $env:VB_LICENSING_HOME = "$PWD/ci-licensing"
+          python tools/licence_admin.py init
+          python tools/ci/make_licence_vectors.py > vectors.txt
+          build/Release/vb_licence_tests.exe vectors.txt
+
+      - name: Licensed end-to-end test on Windows (CI key, test-only voice)
+        # Builds a second engine/test binary that trusts a throw-away CI key, activates this runner,
+        # then runs the real plugin processor code: import -> extract -> convert -> preview -> export.
+        # The "voice" is an UNTRAINED network flagged test_only: it checks plumbing, not quality.
+        shell: pwsh
+        run: |
+          $env:VB_LICENSING_HOME = "$PWD/ci-licensing"
+          python tools/ci/write_pubkey_header.py "$PWD/ci_pubkey.h"
+          cmake -S . -B build-ci -G "Visual Studio 17 2022" -A x64 -DVB_BUILD_PLUGIN=OFF "-DVB_PUBLIC_KEY_HEADER=$PWD/ci_pubkey.h"
+          cmake --build build-ci --config Release --parallel --target VocalEngine PluginWorkflowTest
+          Copy-Item external/onnxruntime/lib/onnxruntime.dll build-ci/VocalEngine_artefacts/Release/
+          Copy-Item external/onnxruntime/lib/onnxruntime.dll build-ci/PluginWorkflowTest_artefacts/Release/
+          python tools/ci/ci_activate.py build-ci/VocalEngine_artefacts/Release/VocalEngine.exe
+          git clone --depth 1 https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI.git rvc
+          git clone --depth 1 https://github.com/bshall/hubert.git hubert-src
+          Invoke-WebRequest https://github.com/bshall/hubert/releases/download/v0.1/hubert-soft-0d54a1f4.pt -OutFile hubert-soft.pt
+          New-Item -ItemType Directory -Force testmodels | Out-Null
+          Copy-Item -Recurse dist/models/separation, dist/models/pitch testmodels/
+          New-Item -ItemType Directory -Force testmodels/encoders | Out-Null
+          python tools/models/export_encoder.py hubert-soft-256 hubert-soft.pt hubert-src testmodels/encoders/hubert-soft-256.onnx
+          python tools/models/export_rvc_voice.py --rvc rvc --untrained-test --config rvc/configs/v1/40k.json --version v1 --id test-untrained --name "TEST (untrained)" --out testmodels/voices/test-untrained
+          python tools/ci/make_test_audio.py "Test Song.wav"
+          $env:VB_ENGINE_DIR = "$PWD/build-ci/VocalEngine_artefacts/Release"
+          $env:VB_MODELS_DIR = "$PWD/testmodels"
+          build-ci/PluginWorkflowTest_artefacts/Release/PluginWorkflowTest.exe "Test Song.wav" ui-snapshot.png
+          dist/app/VocalEngine.exe info --models dist/models
+
+      - name: pluginval
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval
+          pluginval/pluginval.exe --strictness-level 10 --validate-in-process --output-dir pluginval-logs "dist/vst3/Vocal Builder.vst3"
+
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -First 1).Trim()
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" "/DDist=$PWD\dist" installer/VocalBuilder.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VocalBuilder-windows-x64
+          path: |
+            installer/Output/*.exe
+            dist/vst3
+            pluginval-logs
+            ui-snapshot.png

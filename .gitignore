@@ -1,0 +1,8 @@
+build*/
+external/
+dist/
+*.onnx
+*.pt
+*.pth
+__pycache__/
+ci-licensing/
