@@ -13,6 +13,7 @@ set(ONNXRUNTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/onnxruntime" CACHE PA
 option(VB_BUILD_PLUGIN "Build the VST3 plugin" ON)
 option(VB_BUILD_ENGINE "Build the VocalEngine helper" ON)
 option(VB_BUILD_TESTS "Build unit tests" ON)
+option(VB_PERSONAL_BUILD "Personal-use build: no licence activation required" ON)
 # CI only: verify licences against a throw-away key so automated tests can activate the runner.
 set(VB_PUBLIC_KEY_HEADER "" CACHE FILEPATH "Override header with the licence public key (CI tests)")
 
@@ -38,6 +39,9 @@ add_library(vb_licence STATIC
 target_include_directories(vb_licence PUBLIC common third_party/monocypher)
 set_target_properties(vb_licence PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+if(VB_PERSONAL_BUILD)
+  add_compile_definitions(VB_PERSONAL_BUILD=1)
+endif()
 if(VB_PUBLIC_KEY_HEADER)
   add_compile_definitions(VB_PUBLIC_KEY_HEADER="${VB_PUBLIC_KEY_HEADER}")
 endif()

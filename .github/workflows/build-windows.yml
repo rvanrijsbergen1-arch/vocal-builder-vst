@@ -100,7 +100,7 @@ jobs:
         run: |
           $env:VB_LICENSING_HOME = "$PWD/ci-licensing"
           python tools/ci/write_pubkey_header.py "$PWD/ci_pubkey.h"
-          cmake -S . -B build-ci -G "Visual Studio 17 2022" -A x64 -DVB_BUILD_PLUGIN=OFF "-DVB_PUBLIC_KEY_HEADER=$PWD/ci_pubkey.h"
+          cmake -S . -B build-ci -G "Visual Studio 17 2022" -A x64 -DVB_BUILD_PLUGIN=OFF -DVB_PERSONAL_BUILD=OFF "-DVB_PUBLIC_KEY_HEADER=$PWD/ci_pubkey.h"
           cmake --build build-ci --config Release --parallel --target VocalEngine PluginWorkflowTest
           Copy-Item external/onnxruntime/lib/onnxruntime.dll build-ci/VocalEngine_artefacts/Release/
           Copy-Item external/onnxruntime/lib/onnxruntime.dll build-ci/PluginWorkflowTest_artefacts/Release/

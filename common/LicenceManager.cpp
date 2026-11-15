@@ -52,6 +52,12 @@ void LicenceManager::save() const
 void LicenceManager::evaluate()
 {
     customerName = lid = expires = {};
+#if VB_PERSONAL_BUILD
+    // Personal build: no activation needed. The signed-licence system stays in the code for later.
+    customerName = "personal use";
+    currentState = State::activated;
+    return;
+#endif
     if (key.isEmpty())
     {
         currentState = State::noKey;
