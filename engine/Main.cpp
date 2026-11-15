@@ -17,6 +17,9 @@
 #include <map>
 #include <thread>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <shellapi.h>
 #pragma comment(lib, "shell32.lib")
