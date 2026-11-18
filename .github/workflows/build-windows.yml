@@ -46,9 +46,14 @@ jobs:
       - name: Fetch JUCE and ONNX Runtime
         run: |
           git clone --depth 1 --branch $env:JUCE_TAG https://github.com/juce-framework/JUCE.git external/JUCE
-          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v$env:ORT_VERSION/onnxruntime-win-x64-$env:ORT_VERSION.zip" -OutFile ort.zip
-          Expand-Archive ort.zip -DestinationPath external
-          Rename-Item "external/onnxruntime-win-x64-$env:ORT_VERSION" onnxruntime
+          # Official NuGet package (the GitHub release zip for this version now returns 404).
+          Invoke-WebRequest "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime/$env:ORT_VERSION" -OutFile ort.zip
+          Expand-Archive ort.zip -DestinationPath ort-nuget
+          New-Item -ItemType Directory -Force external/onnxruntime/include, external/onnxruntime/lib | Out-Null
+          Copy-Item ort-nuget/build/native/include/* external/onnxruntime/include/
+          Copy-Item ort-nuget/runtimes/win-x64/native/* external/onnxruntime/lib/
+          Copy-Item (Get-ChildItem ort-nuget -Filter "LICENSE*" | Select-Object -First 1).FullName external/onnxruntime/LICENSE
+          Get-ChildItem external/onnxruntime -Recurse -Name
 
       - name: Configure
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
