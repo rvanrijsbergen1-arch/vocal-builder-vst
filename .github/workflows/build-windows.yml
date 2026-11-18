@@ -46,8 +46,16 @@ jobs:
       - name: Fetch JUCE and ONNX Runtime
         run: |
           git clone --depth 1 --branch $env:JUCE_TAG https://github.com/juce-framework/JUCE.git external/JUCE
-          # Official NuGet package (the GitHub release zip for this version now returns 404).
-          Invoke-WebRequest "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime/$env:ORT_VERSION" -OutFile ort.zip
+          # Official NuGet package (github.com/microsoft/onnxruntime returns 404 since Nov 2026).
+          $v = $env:ORT_VERSION
+          $urls = @("https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/$v/microsoft.ml.onnxruntime.$v.nupkg",
+                    "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime/$v",
+                    "https://globalcdn.nuget.org/packages/microsoft.ml.onnxruntime.$v.nupkg")
+          $ok = $false
+          foreach ($attempt in 1..3) { foreach ($u in $urls) {
+            if (-not $ok) { try { Invoke-WebRequest $u -OutFile ort.zip; $ok = $true; Write-Host "ONNX Runtime from $u" } catch { Write-Host "failed: $u ($($_.Exception.Message))" } }
+          }; if (-not $ok) { Start-Sleep 10 } }
+          if (-not $ok) { throw "Could not download ONNX Runtime" }
           Expand-Archive ort.zip -DestinationPath ort-nuget
           New-Item -ItemType Directory -Force external/onnxruntime/include, external/onnxruntime/lib | Out-Null
           Copy-Item ort-nuget/build/native/include/* external/onnxruntime/include/
