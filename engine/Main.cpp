@@ -10,6 +10,7 @@
 #include "LicenceManager.h"
 #include "Dsp.h"
 #include "Protocol.h"
+#include "Mdx.h"
 #include "Separator.h"
 #include "VoiceConverter.h"
 #include <chrono>
@@ -137,9 +138,13 @@ int run (const std::string& cmd, const std::map<std::string, std::string>& a)
             voices += "{\"id\":" + jsonStr (v.id) + ",\"name\":" + jsonStr (v.name) + ",\"description\":" + jsonStr (v.description) + ",\"licence\":" + jsonStr (v.licence) + ",\"languages\":" + langs + "],\"tags\":" + tags + "],\"has_index\":" + (v.hasIndex ? "true" : "false") + ",\"test_only\":" + (v.testOnly ? "true" : "false") + "}";
         }
         voices += "]";
-        const bool sep = fs::exists (models / "separation" / "spleeter_2stems.onnx");
-        const bool pitch = fs::exists (models / "pitch" / "fcpe.onnx");
-        sendResult (std::string ("{\"version\":\"") + VB_VERSION + "\",\"separation_model\":" + (sep ? "true" : "false") + ",\"pitch_model\":" + (pitch ? "true" : "false") + ",\"voices\":" + voices + ",\"threads\":" + std::to_string (threadCount (a)) + "}");
+        const auto sd = models / "separation";
+        const bool mdx = mdxModelAvailable (sd / "UVR-MDX-NET-Voc_FT.onnx") || mdxModelAvailable (sd / "Kim_Vocal_2.onnx");
+        const bool sep = mdx || fs::exists (sd / "spleeter_2stems.onnx");
+        const bool kara = mdxModelAvailable (sd / "UVR_MDXNET_KARA_2.onnx");
+        const bool rev = mdxModelAvailable (sd / "Reverb_HQ_By_FoxJoy.onnx");
+        const bool pitch = fs::exists (models / "pitch" / "rmvpe.onnx") || fs::exists (models / "pitch" / "fcpe.onnx");
+        sendResult (std::string ("{\"version\":\"") + VB_VERSION + "\",\"separation_model\":" + (sep ? "true" : "false") + ",\"mdx_vocals\":" + (mdx ? "true" : "false") + ",\"lead_backing\":" + (kara ? "true" : "false") + ",\"dereverb\":" + (rev ? "true" : "false") + ",\"pitch_model\":" + (pitch ? "true" : "false") + ",\"voices\":" + voices + ",\"threads\":" + std::to_string (threadCount (a)) + "}");
         return 0;
     }
 
@@ -175,11 +180,29 @@ int run (const std::string& cmd, const std::map<std::string, std::string>& a)
         sendProgress (0.0, "Reading audio…");
         auto mix = readAudio (pathArg (need (a, "in")), num (a, "start", 0), num (a, "end", -1));
         writeWavFloat (outDir / "input.wav", mix);
-        auto r = separate (mix, models / "separation" / "spleeter_2stems.onnx", threadCount (a), progressFn());
+        SeparationOptions opts;
+        opts.isolatedVocal = a.count ("isolated") > 0;
+        opts.leadOnly = a.count ("lead-only") > 0;
+        opts.dereverb = a.count ("dereverb") > 0;
+        auto r = separateChain (mix, models, opts, threadCount (a), progressFn());
         sendProgress (0.97, "Saving stems…");
+        std::error_code ec;
+        for (const char* stale : { "instrumental.wav", "backing.wav" })
+            fs::remove (outDir / stale, ec);
         writeWavFloat (outDir / "vocals.wav", r.vocals);
-        writeWavFloat (outDir / "instrumental.wav", r.instrumental);
-        sendResult ("{\"input\":" + audioJson (outDir / "input.wav", mix) + ",\"vocals\":" + audioJson (outDir / "vocals.wav", r.vocals) + ",\"instrumental\":" + audioJson (outDir / "instrumental.wav", r.instrumental) + ",\"seconds\":" + std::to_string (elapsed()) + ",\"audio_seconds\":" + std::to_string (mix.seconds()) + ",\"peak_rss_mb\":" + std::to_string (peakRssMb()) + "}");
+        std::string json = "{\"input\":" + audioJson (outDir / "input.wav", mix) + ",\"vocals\":" + audioJson (outDir / "vocals.wav", r.vocals);
+        if (r.instrumental.numSamples() > 0)
+        {
+            writeWavFloat (outDir / "instrumental.wav", r.instrumental);
+            json += ",\"instrumental\":" + audioJson (outDir / "instrumental.wav", r.instrumental);
+        }
+        if (r.backing.numSamples() > 0)
+        {
+            writeWavFloat (outDir / "backing.wav", r.backing);
+            json += ",\"backing\":" + audioJson (outDir / "backing.wav", r.backing);
+        }
+        json += ",\"engine\":" + jsonStr (r.engine) + ",\"seconds\":" + std::to_string (elapsed()) + ",\"audio_seconds\":" + std::to_string (mix.seconds()) + ",\"peak_rss_mb\":" + std::to_string (peakRssMb()) + "}";
+        sendResult (json);
         return 0;
     }
 
@@ -196,6 +219,7 @@ int run (const std::string& cmd, const std::map<std::string, std::string>& a)
         s.indexRate = it->hasIndex ? std::clamp (num (a, "index-rate", 0.5), 0.0, 1.0) : 0.0;
         s.protect = std::clamp (num (a, "protect", 0.33), 0.0, 0.5);
         s.dynamics = std::clamp (num (a, "dynamics", 1.0), 0.0, 1.0);
+        s.tune = std::clamp (num (a, "tune", 0.0), 0.0, 1.0);
         sendProgress (0.0, "Reading vocal…");
         auto vocal = readAudio (pathArg (need (a, "in")));
         auto out = convertVoice (vocal, *it, models, s, threadCount (a), progressFn());
