@@ -28,6 +28,7 @@ struct ConversionSettings
     double indexRate = 0.0;    // 0..1: how much the voice's own timbre features replace the source (needs an index)
     double protect = 0.33;     // 0..0.5: keeps breathy/unvoiced consonants closer to the source (needs an index)
     double dynamics = 1.0;     // 0..1: 0 = follow the source loudness envelope, 1 = model's own envelope
+    double tune = 0.0;         // 0..1: pull the melody toward exact semitones (pitch correction)
     unsigned seed = 1234;
 };
 

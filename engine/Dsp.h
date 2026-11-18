@@ -29,6 +29,28 @@ private:
     void fft (std::complex<float>* data, bool inverse);
 };
 
+// Complex FFT of any length (radix-2 for powers of two, Bluestein's algorithm otherwise).
+// Needed for the MDX-Net models, whose FFT sizes are 5120, 6144 and 7680.
+class AnyFFT
+{
+public:
+    explicit AnyFFT (int size);
+    int size() const { return n; }
+    // in-place forward transform (no scaling)
+    void forward (std::complex<double>* data);
+    // real input -> n/2+1 bins
+    void forwardReal (const float* in, std::complex<float>* out);
+    // n/2+1 bins (Hermitian) -> n real samples, scaled by 1/n
+    void inverseReal (const std::complex<float>* in, float* out);
+
+private:
+    int n, m;
+    bool pow2;
+    std::vector<std::complex<double>> chirp, bfft, work, twm;
+    std::vector<int> brm;
+    void radix2 (std::complex<double>* d, bool inv);
+};
+
 // Periodic Hann window (matches tf.signal.hann_window(periodic=True)).
 std::vector<float> hannPeriodic (int n);
 

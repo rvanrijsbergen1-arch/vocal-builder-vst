@@ -25,13 +25,15 @@ struct Session
     double regionStart = 0, regionEnd = 0;
     bool regionFull = true;
     juce::String segmentKey;     // folder name of the processed section
-    bool extracted = false, hasInstrumental = false;
+    bool extracted = false, hasInstrumental = false, hasBacking = false, leadOnly = false, dereverb = false;
+    juce::String separationEngine;
     double rmsVocal = -100, rmsInstrumental = -100;
     juce::Array<Conversion> conversions;
 
     juce::File segmentDir() const { return dir.getChildFile ("segments").getChildFile (segmentKey); }
     juce::File vocalsFile() const { return segmentDir().getChildFile ("vocals.wav"); }
     juce::File instrumentalFile() const { return segmentDir().getChildFile ("instrumental.wav"); }
+    juce::File backingFile() const { return segmentDir().getChildFile ("backing.wav"); }
     juce::File exportsDir() const { return dir.getChildFile ("exports"); }
 
     static juce::File rootDir();
