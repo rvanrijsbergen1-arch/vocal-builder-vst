@@ -37,6 +37,10 @@ juce::var Session::toVar() const
     o->setProperty ("segmentKey", segmentKey);
     o->setProperty ("extracted", extracted);
     o->setProperty ("hasInstrumental", hasInstrumental);
+    o->setProperty ("hasBacking", hasBacking);
+    o->setProperty ("leadOnly", leadOnly);
+    o->setProperty ("dereverb", dereverb);
+    o->setProperty ("separationEngine", separationEngine);
     o->setProperty ("rmsVocal", rmsVocal);
     o->setProperty ("rmsInstrumental", rmsInstrumental);
     juce::Array<juce::var> convs;
@@ -73,6 +77,10 @@ Session Session::fromVar (const juce::var& v)
     s.segmentKey = v["segmentKey"].toString();
     s.extracted = v["extracted"];
     s.hasInstrumental = v["hasInstrumental"];
+    s.hasBacking = v["hasBacking"];
+    s.leadOnly = v["leadOnly"];
+    s.dereverb = v["dereverb"];
+    s.separationEngine = v["separationEngine"].toString();
     s.rmsVocal = v["rmsVocal"];
     s.rmsInstrumental = v["rmsInstrumental"];
     if (auto* arr = v["conversions"].getArray())

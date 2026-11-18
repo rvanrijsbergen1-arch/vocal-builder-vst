@@ -136,6 +136,109 @@ void RealFFT::inverse (const std::complex<float>* in, float* out)
         out[i] = buf[(size_t) i].real() * s;
 }
 
+// ------------------------------------------------------------------ AnyFFT
+AnyFFT::AnyFFT (int size) : n (size)
+{
+    pow2 = (n & (n - 1)) == 0;
+    m = 1;
+    while (m < (pow2 ? n : 2 * n - 1))
+        m <<= 1;
+    twm.resize ((size_t) m / 2);
+    for (int i = 0; i < m / 2; ++i)
+        twm[(size_t) i] = std::polar (1.0, -2.0 * kPi * i / m);
+    int bits = 0;
+    while ((1 << bits) < m)
+        ++bits;
+    brm.resize ((size_t) m);
+    for (int i = 0; i < m; ++i)
+    {
+        int r = 0;
+        for (int b = 0; b < bits; ++b)
+            if (i & (1 << b))
+                r |= 1 << (bits - 1 - b);
+        brm[(size_t) i] = r;
+    }
+    work.resize ((size_t) m);
+    if (! pow2)
+    {
+        chirp.resize ((size_t) n);
+        for (int k = 0; k < n; ++k)
+        {
+            const long long k2 = ((long long) k * k) % (2LL * n); // exact phase index
+            chirp[(size_t) k] = std::polar (1.0, -kPi * (double) k2 / n);
+        }
+        bfft.assign ((size_t) m, {});
+        bfft[0] = std::conj (chirp[0]);
+        for (int k = 1; k < n; ++k)
+            bfft[(size_t) k] = bfft[(size_t) (m - k)] = std::conj (chirp[(size_t) k]);
+        radix2 (bfft.data(), false);
+    }
+}
+
+void AnyFFT::radix2 (std::complex<double>* d, bool inv)
+{
+    for (int i = 0; i < m; ++i)
+        if (i < brm[(size_t) i])
+            std::swap (d[i], d[brm[(size_t) i]]);
+    for (int len = 2; len <= m; len <<= 1)
+    {
+        const int half = len / 2, stride = m / len;
+        for (int i = 0; i < m; i += len)
+            for (int j = 0; j < half; ++j)
+            {
+                auto w = twm[(size_t) (j * stride)];
+                if (inv)
+                    w = std::conj (w);
+                const auto u = d[i + j], v = d[i + j + half] * w;
+                d[i + j] = u + v;
+                d[i + j + half] = u - v;
+            }
+    }
+}
+
+void AnyFFT::forward (std::complex<double>* data)
+{
+    if (pow2)
+    {
+        radix2 (data, false);
+        return;
+    }
+    std::fill (work.begin(), work.end(), std::complex<double> {});
+    for (int k = 0; k < n; ++k)
+        work[(size_t) k] = data[k] * chirp[(size_t) k];
+    radix2 (work.data(), false);
+    for (int k = 0; k < m; ++k)
+        work[(size_t) k] *= bfft[(size_t) k];
+    radix2 (work.data(), true);
+    const double s = 1.0 / m;
+    for (int k = 0; k < n; ++k)
+        data[k] = work[(size_t) k] * s * chirp[(size_t) k];
+}
+
+void AnyFFT::forwardReal (const float* in, std::complex<float>* out)
+{
+    std::vector<std::complex<double>> b ((size_t) std::max (n, m));
+    for (int i = 0; i < n; ++i)
+        b[(size_t) i] = { in[i], 0.0 };
+    forward (b.data());
+    for (int i = 0; i <= n / 2; ++i)
+        out[i] = std::complex<float> ((float) b[(size_t) i].real(), (float) b[(size_t) i].imag());
+}
+
+void AnyFFT::inverseReal (const std::complex<float>* in, float* out)
+{
+    // ifft(X) = conj(fft(conj(X))) / n
+    std::vector<std::complex<double>> b ((size_t) std::max (n, m));
+    for (int i = 0; i <= n / 2; ++i)
+        b[(size_t) i] = std::conj (std::complex<double> (in[i].real(), in[i].imag()));
+    for (int i = n / 2 + 1; i < n; ++i)
+        b[(size_t) i] = std::complex<double> (in[n - i].real(), in[n - i].imag()); // conj of the mirrored conj
+    forward (b.data());
+    const double s = 1.0 / n;
+    for (int i = 0; i < n; ++i)
+        out[i] = (float) (b[(size_t) i].real() * s);
+}
+
 std::vector<float> hannPeriodic (int n)
 {
     std::vector<float> w ((size_t) n);
