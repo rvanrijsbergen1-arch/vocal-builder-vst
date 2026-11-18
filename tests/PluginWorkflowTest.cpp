@@ -94,11 +94,13 @@ int main (int argc, char** argv)
     auto voc = readFile (p->session.vocalsFile(), sr, bits);
     CHECK (voc.getNumSamples() == (int) std::llround (10.0 * sr) && sr == 44100.0, "vocal stem is exactly the section length at the source rate");
     CHECK (p->session.hasInstrumental, "instrumental produced");
+    CHECK (p->session.hasBacking == p->leadBackingAvailable, "backing vocals split off when the lead/backing model is installed");
+    std::printf ("  separation: %s\n", p->session.separationEngine.toRawUTF8());
 
     // Convert.
     if (! p->voices.isEmpty())
     {
-        p->convert (p->voices[0], 2.0, 0.0, 0.33, 1.0);
+        p->convert (p->voices[0], 2.0, 0.0, 0.33, 1.0, 0.5);
         waitJob (*p);
         CHECK (p->session.conversions.size() == 1, "conversion finished");
         auto conv = readFile (p->session.conversions[0].file, sr, bits);
@@ -175,7 +177,9 @@ int main (int argc, char** argv)
     auto badModels = juce::File::createTempFile ("models");
     badModels.createDirectory();
     badModels.getChildFile ("separation").createDirectory();
-    badModels.getChildFile ("separation/spleeter_2stems.onnx").replaceWithText ("not a model");
+    badModels.getChildFile ("separation/UVR-MDX-NET-Voc_FT.onnx").replaceWithText ("not a model");
+    badModels.getChildFile ("separation/UVR-MDX-NET-Voc_FT.json").replaceWithText ("{\"n_fft\":7680,\"dim_f\":3072,\"dim_t\":8,\"compensate\":1.021,\"primary\":\"Vocals\"}");
+    p->leadOnly = false;
     const auto goodModels = juce::SystemStats::getEnvironmentVariable ("VB_MODELS_DIR", {});
     setEnv ("VB_MODELS_DIR", badModels.getFullPathName().toRawUTF8());
     p->processSection (false);

@@ -53,7 +53,8 @@ public:
     juce::String importFile (const juce::File& f, bool isolatedVocal); // returns error text or empty
     void setRegion (double start, double end);
     void processSection (bool fullSong);   // extract (or copy, for isolated vocals)
-    void convert (const VoiceEntry& voice, double pitch, double indexRate, double protect, double dynamics);
+    void convert (const VoiceEntry& voice, double pitch, double indexRate, double protect, double dynamics, double tune);
+    std::atomic<bool> leadOnly { true }, dereverb { false }; // extraction options (UI)
     void exportAudio (const juce::String& source, int sampleRate, const juce::String& bits, bool alignToSongStart,
                       std::function<void (juce::File, juce::String)> done);
     void cancelJob();
@@ -81,7 +82,7 @@ public:
     LicenceManager licence;
     juce::Array<VoiceEntry> voices;
     juce::String voicesError;
-    bool separationModelInstalled = false;
+    bool separationModelInstalled = false, mdxInstalled = false, leadBackingAvailable = false, dereverbAvailable = false;
     EngineJob job;
     juce::String lastError, lastInfo;
     juce::AudioFormatManager formats;
@@ -94,7 +95,7 @@ private:
     {
         juce::Array<VoiceEntry> voices;
         juce::String error;
-        bool separationModel = false;
+        bool separationModel = false, mdx = false, leadBacking = false, dereverb = false;
     };
     VoiceScan scanVoices() const;
     void startJob (const juce::StringArray& args, const juce::String& label, std::function<void (const juce::var&)> onResult);

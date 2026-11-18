@@ -50,7 +50,7 @@ endif()
 if(VB_BUILD_ENGINE)
   juce_add_console_app(VocalEngine PRODUCT_NAME "VocalEngine")
   target_sources(VocalEngine PRIVATE
-    engine/Main.cpp engine/AudioIO.cpp engine/Dsp.cpp engine/Separator.cpp engine/VoiceConverter.cpp
+    engine/Main.cpp engine/AudioIO.cpp engine/Dsp.cpp engine/Separator.cpp engine/VoiceConverter.cpp engine/Mdx.cpp
     common/LicenceManager.cpp)
   target_compile_definitions(VocalEngine PRIVATE
     JUCE_USE_MP3AUDIOFORMAT=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_STANDALONE_APPLICATION=1

@@ -19,6 +19,21 @@ review, not legal advice. Have a lawyer confirm before selling.
 | Microsoft VC++ redistributable | C++ runtime for onnxruntime.dll | Microsoft redistributable licence | – | OK (explicitly redistributable) | yes | |
 | Inno Setup 6 | Installer builder (not shipped) | Inno Setup licence (free, commercial use allowed) | – | – | – | |
 
+## Personal-use build (current, since 18 Nov 2026)
+The owner decided the plugin is for personal use only. For quality, the personal build now ships
+models that are **not cleared for selling**. Do not sell or distribute this build without replacing them.
+
+| Component | Role | Licence status |
+|---|---|---|
+| UVR-MDX-NET-Voc_FT (UVR community, GitHub TRvlvr/model_repo) | Vocal/instrumental separation | No licence published with the weights; treat as personal use |
+| UVR_MDXNET_KARA_2 | Lead vs backing vocals | Same |
+| Reverb_HQ_By_FoxJoy | De-reverb | Same |
+| RMVPE (yxlllc release 230917) | Melody (f0) tracking | No licence published; partly trained on non-commercial data (M4Singer) |
+| Applio base models (used to train the owner's voices) | Voice training start point | RVC pretrained weights: "research use only" clause |
+
+Spleeter (MIT) is no longer shipped: measured on test mixes it let so much synth through that the
+melody tracker was wrong on 42-45 % of sung frames, which made conversions sound off-key.
+
 ## Evaluated and rejected
 
 | Candidate | Why it is not used |

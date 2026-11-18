@@ -18,6 +18,16 @@ singer. The network architecture and training code are RVC's (MIT).
 Costs: only GPU time if you rent one. Run the pilot in step 2 first and measure how long it takes,
 then multiply by the hourly price. I don't give a duration estimate until it has been measured.
 
+## Quick path for personal voices (Applio)
+1. One folder per singer, never mixed: `python training/prepare_dataset.py --models <install>/models/separation --out <dataset folder> <dry vocal wavs of that singer>`.
+   It removes doubles/harmonies (lead only), cuts at silences and reports the minutes left. Aim for 10+ minutes.
+2. In Applio: Training tab, sampling rate 40000, vocoder **HiFi-GAN** (the plugin only supports HiFi-GAN),
+   pitch extraction rmvpe, embedder contentvec, Audio cutting "Skip" (already sliced), CPU cores 4 on Windows
+   (higher can exhaust the page file), laptop on the charger.
+3. Epochs: about 200-300 for 10 minutes; save every 25 and compare by ear.
+4. Export: `python tools/models/export_rvc_voice.py --rvc <rvc repo> --ckpt <model>.pth --index <model>.index --id <id> --name "<name>" --out <folder>`,
+   then "Add voice..." in the plugin.
+
 ## Steps
 1. **Check the recordings**: `python training/check_recordings.py <folder>`. Fix every file marked FIX.
 2. **Pilot**: train the base model for 1 hour on 10 hours of data and note the steps per hour.

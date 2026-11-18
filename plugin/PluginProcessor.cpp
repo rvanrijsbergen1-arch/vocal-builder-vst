@@ -167,6 +167,9 @@ void VocalBuilderProcessor::refreshVoicesAsync()
             voices = result->voices;
             voicesError = result->error;
             separationModelInstalled = result->separationModel;
+            mdxInstalled = result->mdx;
+            leadBackingAvailable = result->leadBacking;
+            dereverbAvailable = result->dereverb;
             voicesLoading = false;
             sendChangeMessage();
         });
@@ -200,6 +203,9 @@ VocalBuilderProcessor::VoiceScan VocalBuilderProcessor::scanVoices() const
         {
             auto j = juce::JSON::parse (line.substring (8));
             scan.separationModel = j["separation_model"];
+            scan.mdx = j["mdx_vocals"];
+            scan.leadBacking = j["lead_backing"];
+            scan.dereverb = j["dereverb"];
             if (auto* arr = j["voices"].getArray())
                 for (auto& v : *arr)
                 {
@@ -318,12 +324,20 @@ void VocalBuilderProcessor::processSection (bool fullSong)
     dir.createDirectory();
 
     juce::StringArray args;
-    if (session.isolatedVocal)
+    session.leadOnly = leadOnly.load() && leadBackingAvailable;
+    session.dereverb = dereverb.load() && dereverbAvailable;
+    if (session.isolatedVocal && ! session.leadOnly && ! session.dereverb)
         args = { "copy", "--in", session.source.getFullPathName(), "--out", session.vocalsFile().getFullPathName() };
     else
     {
         args = baseArgs ("separate");
         args.addArray ({ "--in", session.source.getFullPathName(), "--out-dir", dir.getFullPathName() });
+        if (session.isolatedVocal)
+            args.add ("--isolated");
+        if (session.leadOnly)
+            args.add ("--lead-only");
+        if (session.dereverb)
+            args.add ("--dereverb");
     }
     if (! session.regionFull)
         args.addArray ({ "--start", juce::String (session.regionStart, 3), "--end", juce::String (session.regionEnd, 3) });
@@ -333,6 +347,8 @@ void VocalBuilderProcessor::processSection (bool fullSong)
         session.rmsVocal = r["vocals"]["rms_db"];
         session.hasInstrumental = r["instrumental"].isObject();
         session.rmsInstrumental = session.hasInstrumental ? (double) r["instrumental"]["rms_db"] : -100.0;
+        session.hasBacking = r["backing"].isObject();
+        session.separationEngine = r["engine"].toString();
         if (r["seconds"].isDouble())
             lastInfo = "Processed " + juce::String ((double) r["audio_seconds"], 1) + " s of audio in " + juce::String ((double) r["seconds"], 1) + " s.";
         session.save();
@@ -340,7 +356,7 @@ void VocalBuilderProcessor::processSection (bool fullSong)
     });
 }
 
-void VocalBuilderProcessor::convert (const VoiceEntry& voice, double pitch, double indexRate, double protect, double dynamics)
+void VocalBuilderProcessor::convert (const VoiceEntry& voice, double pitch, double indexRate, double protect, double dynamics, double tune)
 {
     if (! session.extracted)
         return;
@@ -360,7 +376,7 @@ void VocalBuilderProcessor::convert (const VoiceEntry& voice, double pitch, doub
 #endif
     args.addArray ({ "--voice", voice.id, "--in", session.vocalsFile().getFullPathName(), "--out", c.file.getFullPathName(),
                      "--pitch", juce::String (pitch), "--index-rate", juce::String (indexRate), "--protect", juce::String (protect),
-                     "--dynamics", juce::String (dynamics) });
+                     "--dynamics", juce::String (dynamics), "--tune", juce::String (tune) });
     startJob (args, "Converting to " + voice.name, [this, c] (const juce::var& r) mutable {
         c.rmsDb = r["converted"]["rms_db"];
         session.conversions.add (c);
@@ -381,6 +397,8 @@ void VocalBuilderProcessor::exportAudio (const juce::String& source, int sampleR
         in = session.vocalsFile();
     else if (source == "instrumental")
         in = session.instrumentalFile();
+    else if (source == "backing")
+        in = session.backingFile();
     else
         for (auto& c : session.conversions)
             if (c.id == source)
@@ -395,8 +413,9 @@ void VocalBuilderProcessor::exportAudio (const juce::String& source, int sampleR
     juce::String song = clean (session.source.getFileNameWithoutExtension().replaceCharacter (' ', '-'));
     if (song.isEmpty())
         song = "Song";
-    juce::String name = source == "vocals" ? song + "_Extracted_Vocal"
+    juce::String name = source == "vocals" ? song + (session.leadOnly ? "_Lead_Vocal" : "_Extracted_Vocal")
                       : source == "instrumental" ? song + "_Instrumental"
+                      : source == "backing" ? song + "_Backing_Vocals"
                                                  : song + "_" + clean (voiceName.replaceCharacter (' ', '-')) + "_Converted_Dry";
     double lead = 0;
     if (! session.regionFull)

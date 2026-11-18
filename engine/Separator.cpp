@@ -1,5 +1,6 @@
 #include "Separator.h"
 #include "Dsp.h"
+#include "Mdx.h"
 #include "OrtModel.h"
 #include <cmath>
 
@@ -128,6 +129,114 @@ SeparationResult separate (const Audio& mixIn, const std::filesystem::path& mode
         r.vocals.channels.push_back (std::move (vr));
         r.instrumental.channels.push_back (std::move (ar));
     }
+    return r;
+}
+
+static Audio toSourceLayout (const Audio& a44, const Audio& src)
+{
+    Audio out;
+    out.sampleRate = src.sampleRate;
+    for (int c = 0; c < src.numChannels(); ++c)
+    {
+        std::vector<float> ch;
+        if (src.numChannels() == 1)
+        {
+            ch.resize (a44.numSamples());
+            for (size_t i = 0; i < ch.size(); ++i)
+                ch[i] = 0.5f * (a44.channels[0][i] + a44.channels[1][i]);
+        }
+        else
+            ch = a44.channels[(size_t) std::min (c, 1)];
+        auto r = dsp::resample (ch, 44100.0, src.sampleRate);
+        r.resize (src.numSamples(), 0.0f);
+        out.channels.push_back (std::move (r));
+    }
+    return out;
+}
+
+static Audio subtract (const Audio& a, const Audio& b)
+{
+    Audio o = a;
+    for (size_t c = 0; c < o.channels.size(); ++c)
+        for (size_t i = 0; i < o.channels[c].size(); ++i)
+            o.channels[c][i] -= b.channels[c][i];
+    return o;
+}
+
+SeparationResult separateChain (const Audio& mix, const std::filesystem::path& modelsDir, const SeparationOptions& o,
+                                int threads, const std::function<void (double, const std::string&)>& progress)
+{
+    const auto sepDir = modelsDir / "separation";
+    std::filesystem::path vocalModel;
+    for (const char* name : { "UVR-MDX-NET-Voc_FT.onnx", "Kim_Vocal_2.onnx" })
+        if (mdxModelAvailable (sepDir / name))
+        {
+            vocalModel = sepDir / name;
+            break;
+        }
+    const auto karaModel = sepDir / "UVR_MDXNET_KARA_2.onnx";
+    const auto reverbModel = sepDir / "Reverb_HQ_By_FoxJoy.onnx";
+    if (o.leadOnly && ! mdxModelAvailable (karaModel))
+        throw EngineError { "MODEL_MISSING", "The lead/backing vocal model is not installed. Reinstall Vocal Builder." };
+    if (o.dereverb && ! mdxModelAvailable (reverbModel))
+        throw EngineError { "MODEL_MISSING", "The de-reverb model is not installed. Reinstall Vocal Builder." };
+
+    // Progress budget per stage.
+    const int stages = (o.isolatedVocal ? 0 : 1) + (o.leadOnly ? 1 : 0) + (o.dereverb ? 1 : 0);
+    int stage = 0;
+    auto stageProgress = [&] (double f, const std::string& m) {
+        progress (0.03 + 0.92 * ((double) stage + f) / std::max (1, stages), m);
+    };
+
+    SeparationResult r;
+    std::string engine;
+    Audio vocals44;
+    if (o.isolatedVocal)
+    {
+        vocals44 = toStereo44k (mix);
+        engine = "isolated vocal";
+    }
+    else if (! vocalModel.empty())
+    {
+        progress (0.02, "Loading vocal model…");
+        const auto mix44 = toStereo44k (mix);
+        vocals44 = mdxPrimaryStem (mix44, vocalModel, threads, stageProgress, "Separating vocal…");
+        ++stage;
+        engine = vocalModel.stem().string();
+    }
+    else
+    {
+        // Legacy fallback: Spleeter (lower quality; kept so older installs still work).
+        auto sp = separate (mix, sepDir / "spleeter_2stems.onnx", threads, stageProgress);
+        ++stage;
+        vocals44 = toStereo44k (sp.vocals);
+        engine = "spleeter_2stems";
+    }
+
+    const Audio allVocals44 = vocals44; // full vocal (lead + backing + reverb) for the instrumental
+    Audio backing44;
+    if (o.leadOnly)
+    {
+        backing44 = mdxPrimaryStem (vocals44, karaModel, threads, stageProgress, "Removing backing vocals…");
+        ++stage;
+        vocals44 = subtract (vocals44, backing44);
+        engine += " + lead/backing split";
+    }
+    if (o.dereverb)
+    {
+        auto rev = mdxPrimaryStem (vocals44, reverbModel, threads, stageProgress, "Removing reverb…");
+        ++stage;
+        vocals44 = subtract (vocals44, rev);
+        engine += " + de-reverb";
+    }
+
+    progress (0.96, "Finishing stems…");
+    r.vocals = toSourceLayout (vocals44, mix);
+    if (o.leadOnly)
+        r.backing = toSourceLayout (backing44, mix);
+    if (! o.isolatedVocal) // instrumental = original mix minus the complete vocal
+        r.instrumental = subtract (mix, toSourceLayout (allVocals44, mix));
+    r.engine = engine;
     return r;
 }
 } // namespace vb
