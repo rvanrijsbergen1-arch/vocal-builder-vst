@@ -1,4 +1,23 @@
-# Status — version 0.1.0 (15 November 2026, updated 15:30)
+# Status — version 0.1.0 (updated 18 November 2026)
+
+## 18 Nov: off-key conversions fixed at the source (measured)
+The first real test sounded badly out of tune. Cause, measured on test mixes (the owner's dry vocal +
+a synthetic hardstyle instrumental with a supersaw lead in the vocal range):
+
+| Extraction | Vocal SDR | Sung frames with wrong melody (>50 cents) |
+|---|---|---|
+| Spleeter (old) | 4.7-4.9 dB | 42-45 % |
+| MDX-Net Voc_FT (new) | 13.5-14.4 dB | ~5 % (with RMVPE) |
+| No separation (full mix) | – | 55-79 % |
+
+The converted voice sings exactly the melody the tracker finds, so 42 % wrong frames = very off-key.
+New in the engine: MDX-Net vocals (C++ port matches the Python reference at 130 dB), lead/backing
+split (default on), optional de-reverb, RMVPE melody tracking (C++ decoder matches RVC < 0.01 cent),
+optional Pitch Correction. Speed on a 2-core VM: 4-minute song, vocals + lead split, 309 s.
+Second cause: the first voice model was trained on 4 singers mixed, including doubles. Retrain one
+voice per singer from lead-only data (`training/prepare_dataset.py`).
+Not yet verified: conversion quality with a retrained voice (cannot be listened to here).
+
 
 ## What exists
 | Item | State |
