@@ -6,9 +6,12 @@ namespace help
 {
 // Help texts describe exactly what the bundled engine does.
 const char* open = "Loads a WAV or MP3. Your original file is only read, never changed. Drag a file onto the plugin or click Open.";
-const char* isolated = "Tick this if the file is already just a vocal (an acapella or a vocal bounce). Extraction is skipped, which avoids extra artifacts.";
+const char* isolated = "Tick this if the file is already just a vocal (an acapella or a vocal bounce). Vocal/instrumental separation is skipped; Lead vocal only and Remove reverb still apply.";
 const char* section = "Drag across the waveform to choose a section, for example a chorus. Test a short section first, then run the full song with the same settings.";
-const char* extract = "Splits the mix into a vocal and an instrumental on this computer (Spleeter 2-stem model, no internet). Lead and backing vocals stay together. Dense mixes with loud kicks, screeches or heavy reverb can leave audible artifacts.";
+const char* extract = "Splits the mix into a vocal and an instrumental on this computer with an MDX-Net vocal model (no internet). The converted voice follows the melody found in this vocal, so a clean extraction matters most: listen with A in Preview first.";
+const char* leadOnly = "Removes backing vocals, doubles and harmonies so only the lead vocal is converted. Recommended: stacked voices confuse the melody detection and make the result sound off-key. The backing vocals stay available as a separate export.";
+const char* dereverb = "Removes reverb and echo from the vocal before conversion. Turn it on when the vocal is wet; a dry vocal gives a cleaner, more in-tune conversion. Takes extra processing time.";
+const char* tune = "Pulls the converted melody toward exact semitones (pitch correction). 0% keeps the singer's own pitch; 50-70% tightens slightly off notes; 100% is hard, robotic tuning.";
 const char* voice = "The singing voice the vocal is converted into. Voices come with Vocal Builder, or add your own trained voice with Add voice (pick its voice.json).";
 const char* pitch = "Moves the melody up or down in semitones before conversion, so it fits the voice's range. Example: +12 for a male vocal into a higher voice. The exported vocal is then in the new key.";
 const char* character = "How much of the voice's own recorded sound replaces the source's timbre. Higher sounds more like the voice but can blur words; try 40-60%.";
@@ -34,7 +37,7 @@ public:
     {
         for (auto* c : std::initializer_list<juce::Component*> {
                  &h1, &h2, &h3, &h4, &h5, &h6, &openButton, &isolated, &fileInfo, &wave, &startLabel, &endLabel, &startEdit,
-                 &endEdit, &fullSelect, &processSection, &processFull, &extractNote, &voiceBox, &addVoice, &voiceInfo, &pitch, &character,
+                 &endEdit, &fullSelect, &processSection, &processFull, &leadOnlyToggle, &dereverbToggle, &iLeadOnly, &iDereverb, &tuneL, &tune, &iTune, &extractNote, &voiceBox, &addVoice, &voiceInfo, &pitch, &character,
                  &protect, &dynamics, &pitchL, &characterL, &protectL, &dynamicsL, &convertButton, &convertNote, &takeBox,
                  &previewView, &play, &stop, &aButton, &bButton, &loop, &match, &withInst, &muteInput, &volume, &volumeL,
                  &timeLabel, &exportSource, &exportRate, &exportBits, &exportTimeline, &exportButton, &dragButton,
@@ -64,6 +67,10 @@ public:
         for (auto* e : { &startEdit, &endEdit })
             e->setInputRestrictions (9, "0123456789.");
         fullSelect.onClick = [this] { proc.setRegion (0, proc.session.duration); };
+        leadOnlyToggle.setToggleState (p.leadOnly.load(), juce::dontSendNotification);
+        dereverbToggle.setToggleState (p.dereverb.load(), juce::dontSendNotification);
+        leadOnlyToggle.onClick = [this] { proc.leadOnly = leadOnlyToggle.getToggleState(); };
+        dereverbToggle.onClick = [this] { proc.dereverb = dereverbToggle.getToggleState(); };
         processSection.onClick = [this] { proc.processSection (false); };
         processFull.onClick = [this] { proc.processSection (true); };
 
@@ -90,6 +97,7 @@ public:
         setupSlider (character, 0, 100, 1, 50, " %");
         setupSlider (protect, 0, 50, 1, 33, " %");
         setupSlider (dynamics, 0, 100, 1, 100, " %");
+        setupSlider (tune, 0, 100, 1, 0, " %");
         setupSlider (volume, 0, 100, 1, 80, " %");
         volume.setValue (p.volume.load() * 100.0, juce::dontSendNotification);
         volume.onValueChange = [this] { proc.volume = (float) volume.getValue() / 100.0f; };
@@ -98,7 +106,7 @@ public:
             if (juce::isPositiveAndBelow (i, proc.voices.size()))
             {
                 const auto& v = proc.voices.getReference (i);
-                proc.convert (v, pitch.getValue(), v.hasIndex ? character.getValue() / 100.0 : 0.0, protect.getValue() / 100.0, dynamics.getValue() / 100.0);
+                proc.convert (v, pitch.getValue(), v.hasIndex ? character.getValue() / 100.0 : 0.0, protect.getValue() / 100.0, dynamics.getValue() / 100.0, tune.getValue() / 100.0);
             }
         };
 
@@ -132,7 +140,7 @@ public:
         for (auto* b : { &processSection, &convertButton })
             b->setColour (juce::TextButton::buttonColourId, colours::accent);
 
-        setSize (900, 1400);
+        setSize (900, 1480);
         refresh();
     }
 
@@ -162,19 +170,23 @@ public:
         for (auto* b : { &processSection, &processFull, &fullSelect })
             b->setEnabled (hasFile && ! busy);
         isolated.setEnabled (! busy);
+        leadOnlyToggle.setEnabled (! busy && proc.leadBackingAvailable);
+        dereverbToggle.setEnabled (! busy && proc.dereverbAvailable);
 
         juce::String ex;
         if (! hasFile)
             ex = "Open a file first.";
         else if (s.isolatedVocal)
-            ex = "Isolated vocal: extraction is skipped.";
+            ex = "Isolated vocal: vocal/instrumental separation is skipped.";
         else if (! proc.separationModelInstalled && ! proc.voicesLoading)
             ex = "The separation model is missing. Reinstall Vocal Builder.";
+        else if (! proc.mdxInstalled && ! proc.voicesLoading)
+            ex = "Using the older Spleeter model (lower quality). Reinstall Vocal Builder to get the MDX-Net models.";
         else
-            ex = "Returns a vocal and an instrumental. Lead and backing vocals stay together.";
+            ex = "Returns the vocal and the instrumental" + juce::String (leadOnlyToggle.getToggleState() ? ", with backing vocals split off." : ".");
         if (s.extracted)
             ex += "\nReady: " + juce::String (s.regionFull ? "full song" : "section " + timeStr (s.regionStart) + " - " + timeStr (s.regionEnd))
-                  + ". Listen with A in Preview before converting.";
+                  + (s.separationEngine.isNotEmpty() ? " (" + s.separationEngine + ")" : juce::String()) + ". Listen with A in Preview before converting.";
         extractNote.setText (ex, juce::dontSendNotification);
 
         // Voices
@@ -226,7 +238,12 @@ public:
         if (s.extracted)
         {
             exportIds.add ("vocals");
-            exportSource.addItem (s.isolatedVocal ? "Original vocal" : "Extracted original vocal", exportIds.size());
+            exportSource.addItem (s.leadOnly ? "Lead vocal (original singer)" : s.isolatedVocal ? "Original vocal" : "Extracted original vocal", exportIds.size());
+        }
+        if (s.hasBacking)
+        {
+            exportIds.add ("backing");
+            exportSource.addItem ("Backing vocals (original)", exportIds.size());
         }
         if (s.hasInstrumental)
         {
@@ -331,6 +348,9 @@ public:
         l.removeFromLeft (8);
         processFull.setBounds (l.removeFromLeft (200));
         iExtract.setBounds (l.removeFromLeft (28));
+        l = row();
+        withInfo (l, leadOnlyToggle, 300, iLeadOnly);
+        withInfo (l, dereverbToggle, 200, iDereverb);
         extractNote.setBounds (row (40));
         r.removeFromTop (8);
 
@@ -354,6 +374,7 @@ public:
         sliderRow (characterL, character, iCharacter);
         sliderRow (protectL, protect, iProtect);
         sliderRow (dynamicsL, dynamics, iDynamics);
+        sliderRow (tuneL, tune, iTune);
         l = row();
         convertButton.setBounds (l.removeFromLeft (200));
         iConvert.setBounds (l.removeFromLeft (28));
@@ -423,12 +444,13 @@ private:
         withInst { "Play with instrumental" }, muteInput { "Mute track input" };
     juce::Label fileInfo, startLabel { {}, "Start" }, endLabel { {}, "End" }, extractNote, voiceInfo, convertNote, timeLabel, exportResult,
         rightsNote, pitchL { {}, "Pitch Shift" }, characterL { {}, "Voice Character" }, protectL { {}, "Consonant Protection" },
-        dynamicsL { {}, "Dynamics" }, volumeL { {}, "Volume" };
+        dynamicsL { {}, "Dynamics" }, volumeL { {}, "Volume" }, tuneL { {}, "Pitch Correction" };
     juce::TextEditor startEdit, endEdit;
     WaveformView wave;
     PreviewView previewView;
     juce::ComboBox voiceBox, takeBox, exportSource, exportRate, exportBits, exportTimeline;
-    juce::Slider pitch, character, protect, dynamics, volume;
+    juce::Slider pitch, character, protect, dynamics, volume, tune;
+    juce::ToggleButton leadOnlyToggle { "Lead vocal only (remove backing/doubles)" }, dereverbToggle { "Remove reverb/echo" };
     DragFileButton dragButton;
     juce::StringArray exportIds;
     juce::File lastExport;
@@ -436,7 +458,8 @@ private:
     InfoButton iOpen { "Open", help::open }, iIsolated { "Isolated vocal", help::isolated }, iSection { "Section", help::section },
         iExtract { "Extract Vocal", help::extract }, iVoice { "Voice", help::voice }, iPitch { "Pitch Shift", help::pitch },
         iCharacter { "Voice Character", help::character }, iProtect { "Consonant Protection", help::protect },
-        iDynamics { "Dynamics", help::dynamics }, iConvert { "Convert", help::convert }, iAB { "A/B comparison", help::ab },
+        iDynamics { "Dynamics", help::dynamics }, iLeadOnly { "Lead vocal only", help::leadOnly }, iDereverb { "Remove reverb/echo", help::dereverb },
+        iTune { "Pitch Correction", help::tune }, iConvert { "Convert", help::convert }, iAB { "A/B comparison", help::ab },
         iMatch { "Match loudness", help::match }, iInst { "Play with instrumental", help::inst }, iMute { "Mute track input", help::mute },
         iExport { "Export", help::exportHelp }, iTimeline { "Timeline position", help::timeline }, iRate { "Sample rate", help::rate },
         iBits { "Format", help::bits }, iRights { "Rights", help::rights };
