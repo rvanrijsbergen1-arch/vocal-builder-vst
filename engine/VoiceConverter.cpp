@@ -194,6 +194,116 @@ std::vector<size_t> chunkBounds (const std::vector<float>& x)
     b.push_back (n);
     return b;
 }
+
+// 100 fps magnitude spectrogram of 16 kHz audio: n_fft 1024, Hann, hop 160, reflect padding.
+static std::vector<float> magSpec (const std::vector<float>& x, int padL, int wantFrames)
+{
+    const int nfft = 1024, hop = 160;
+    const long n = (long) x.size();
+    std::vector<float> padded ((size_t) (n + 2 * padL));
+    for (long i = 0; i < (long) padded.size(); ++i)
+    {
+        long src = i - padL;
+        if (src < 0)
+            src = -src;
+        if (src >= n)
+            src = 2 * n - src - 2;
+        padded[(size_t) i] = x[(size_t) std::clamp<long> (src, 0, n - 1)];
+    }
+    const int stftFrames = (int) ((padded.size() - (size_t) nfft) / hop + 1);
+    std::vector<float> spec ((size_t) wantFrames * 513);
+    dsp::RealFFT fft (nfft);
+    const auto win = dsp::hannPeriodic (nfft);
+    std::vector<float> fr (nfft);
+    std::vector<std::complex<float>> bins (513);
+    for (int t = 0; t < wantFrames; ++t)
+    {
+        const int tt = std::min (t, stftFrames - 1); // repeat the last frame if more are wanted
+        for (int i = 0; i < nfft; ++i)
+            fr[(size_t) i] = padded[(size_t) tt * hop + (size_t) i] * win[(size_t) i];
+        fft.forward (fr.data(), bins.data());
+        for (int k = 0; k < 513; ++k)
+            spec[(size_t) t * 513 + (size_t) k] = std::sqrt (std::norm (bins[(size_t) k]));
+    }
+    return spec;
+}
+
+// FCPE: torchfcpe front end (reflect-pad 432, no centring, last frame repeated to N/160 + 1 frames).
+static std::vector<float> fcpeF0 (OrtModel& m, const std::vector<float>& chunk)
+{
+    auto spec = magSpec (chunk, 432, (int) (chunk.size() / 160 + 1));
+    for (auto& v : spec)
+        v = std::sqrt (v * v + 1e-9f);
+    std::vector<Ort::Value> in;
+    in.push_back (OrtModel::tensor (spec, { 1, (int64_t) (spec.size() / 513), 513 }));
+    auto out = m.run (in);
+    const float* f = out[0].GetTensorData<float>();
+    return std::vector<float> (f, f + out[0].GetTensorTypeAndShapeInfo().GetElementCount());
+}
+
+// RMVPE: centred STFT (reflect-pad 512) -> salience over 360 cent bins -> local weighted average,
+// exactly as RVC decodes it (threshold 0.03).
+static std::vector<float> rmvpeF0 (OrtModel& m, const std::vector<float>& chunk)
+{
+    const int frames = (int) (chunk.size() / 160 + 1);
+    auto spec = magSpec (chunk, 512, frames);
+    std::vector<Ort::Value> in;
+    in.push_back (OrtModel::tensor (spec, { 1, frames, 513 }));
+    auto out = m.run (in);
+    const float* sal = out[0].GetTensorData<float>();
+    const int T = (int) (out[0].GetTensorTypeAndShapeInfo().GetElementCount() / 360);
+    std::vector<float> f0 ((size_t) T, 0.0f);
+    for (int t = 0; t < T; ++t)
+    {
+        const float* s = sal + (size_t) t * 360;
+        int c = 0;
+        for (int i = 1; i < 360; ++i)
+            if (s[i] > s[c])
+                c = i;
+        if (s[c] <= 0.03f)
+            continue;
+        double num = 0, den = 0;
+        for (int i = c - 4; i <= c + 4; ++i)
+        {
+            if (i < 0 || i >= 360)
+                continue; // RVC pads the salience and the cent map with zeros
+            num += (double) s[i] * (20.0 * i + 1997.3794084376191);
+            den += s[i];
+        }
+        const double cents = num / den;
+        const double hz = 10.0 * std::pow (2.0, cents / 1200.0);
+        f0[(size_t) t] = hz > 10.0 ? (float) hz : 0.0f;
+    }
+    return f0;
+}
+
+// Pulls the melody toward the nearest semitone. amount 0..1; the correction is smoothed over 30 ms
+// so note transitions and vibrato are not hard-quantised unless amount = 1.
+static void correctPitch (std::vector<float>& f0, double amount)
+{
+    const size_t n = f0.size();
+    std::vector<double> corr (n, 0.0), midi (n, 0.0);
+    for (size_t i = 0; i < n; ++i)
+        if (f0[i] > 0)
+        {
+            midi[i] = 69.0 + 12.0 * std::log2 (f0[i] / 440.0);
+            corr[i] = std::round (midi[i]) - midi[i];
+        }
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (f0[i] <= 0)
+            continue;
+        double c = 0, w = 0;
+        for (size_t k = (i > 1 ? i - 1 : 0); k <= std::min (n - 1, i + 1); ++k)
+            if (f0[k] > 0)
+            {
+                c += corr[k];
+                w += 1;
+            }
+        const double m = midi[i] + amount * (c / w);
+        f0[i] = (float) (440.0 * std::pow (2.0, (m - 69.0) / 12.0));
+    }
+}
 } // namespace
 
 Audio convertVoice (const Audio& vocal, const VoiceInfo& voice, const fs::path& modelsDir, const ConversionSettings& s,
@@ -202,7 +312,9 @@ Audio convertVoice (const Audio& vocal, const VoiceInfo& voice, const fs::path& 
     progress (0.01, "Loading voice models…");
     const auto encFile = modelsDir / "encoders" / (voice.encoder + ".onnx");
     OrtModel encoder (encFile, threads);
-    OrtModel pitch (modelsDir / "pitch" / "fcpe.onnx", threads);
+    // RMVPE (robust vocal pitch estimator) when installed, FCPE as fallback.
+    const bool useRmvpe = std::filesystem::exists (modelsDir / "pitch" / "rmvpe.onnx");
+    auto pitch = std::make_unique<OrtModel> (modelsDir / "pitch" / (useRmvpe ? "rmvpe.onnx" : "fcpe.onnx"), threads);
     OrtModel synth (voice.dir / "synth.onnx", threads);
     FeatureIndex index;
     const bool useIndex = voice.hasIndex && s.indexRate > 0.0;
@@ -268,46 +380,11 @@ Audio convertVoice (const Audio& vocal, const VoiceInfo& voice, const fs::path& 
 
         // 2. Melody (f0) at 100 fps.
         report (0.45, "Tracking the melody…");
-        // FCPE front end (identical to torchfcpe): reflect-pad 432, |STFT| n_fft 1024 / hop 160,
-        // Hann window, last frame repeated to reach N/160 + 1 frames.
-        std::vector<float> spec;
-        {
-            const int nfft = 1024, hop = 160, padL = 432;
-            const long n = (long) chunk.size();
-            std::vector<float> padded ((size_t) (n + 2 * padL));
-            for (long i = 0; i < (long) padded.size(); ++i)
-            {
-                long src = i - padL;
-                if (src < 0)
-                    src = -src;
-                if (src >= n)
-                    src = 2 * n - src - 2;
-                padded[(size_t) i] = chunk[(size_t) std::clamp<long> (src, 0, n - 1)];
-            }
-            const int stftFrames = (int) ((padded.size() - (size_t) nfft) / hop + 1);
-            const int wantFrames = (int) (n / hop + 1);
-            spec.resize ((size_t) wantFrames * 513);
-            dsp::RealFFT fft (nfft);
-            const auto win = dsp::hannPeriodic (nfft);
-            std::vector<float> fr (nfft);
-            std::vector<std::complex<float>> bins (513);
-            for (int t = 0; t < wantFrames; ++t)
-            {
-                const int tt = std::min (t, stftFrames - 1);
-                for (int i = 0; i < nfft; ++i)
-                    fr[(size_t) i] = padded[(size_t) tt * hop + (size_t) i] * win[(size_t) i];
-                fft.forward (fr.data(), bins.data());
-                for (int k = 0; k < 513; ++k)
-                    spec[(size_t) t * 513 + (size_t) k] = std::sqrt (std::norm (bins[(size_t) k]) + 1e-9f);
-            }
-        }
-        std::vector<Ort::Value> pin;
-        pin.push_back (OrtModel::tensor (spec, { 1, (int64_t) (spec.size() / 513), 513 }));
-        auto pout = pitch.run (pin);
-        const float* f0raw = pout[0].GetTensorData<float>();
-        const auto pframes = (int) pout[0].GetTensorTypeAndShapeInfo().GetElementCount();
+        std::vector<float> f0det = useRmvpe ? rmvpeF0 (*pitch, chunk) : fcpeF0 (*pitch, chunk);
+        const float* f0raw = f0det.data();
+        const auto pframes = (int) f0det.size();
         if (ci == 0)
-            if (const char* dump = std::getenv ("VB_DEBUG_DUMP_F0")) // developer check against torchfcpe
+            if (const char* dump = std::getenv ("VB_DEBUG_DUMP_F0")) // developer check against the Python trackers
             {
                 std::ofstream df (dump, std::ios::binary);
                 df.write ((const char*) chunk.data(), (std::streamsize) (chunk.size() * sizeof (float)));
@@ -324,6 +401,18 @@ Audio convertVoice (const Audio& vocal, const VoiceInfo& voice, const fs::path& 
             if (mel > 0)
                 mel = (mel - melMin) * 254.0 / (melMax - melMin) + 1.0;
             coarse[(size_t) t] = (int64_t) std::lround (std::clamp (mel, 1.0, 255.0));
+        }
+
+        if (s.tune > 0.0)
+        {
+            correctPitch (f0, s.tune);
+            for (int t = 0; t < frames; ++t)
+            {
+                double mel = 1127.0 * std::log (1.0 + f0[(size_t) t] / 700.0);
+                if (mel > 0)
+                    mel = (mel - melMin) * 254.0 / (melMax - melMin) + 1.0;
+                coarse[(size_t) t] = (int64_t) std::lround (std::clamp (mel, 1.0, 255.0));
+            }
         }
 
         // Consonant protection: unvoiced frames keep more of the original features.
